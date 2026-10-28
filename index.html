@@ -300,12 +300,13 @@ addEventListener('resize',resize);
 // =====================================================================
 //  AUDIO — sintetizador propio: música, efectos y locutor
 // =====================================================================
+const MOBILE=/iPhone|iPad|iPod|Android|Mobi/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.platform));
 const A={ctx:null,master:null,music:null,sfx:null,noise:null,muted:store.get('muted',false),volM:store.get('volM',70)/100,volS:store.get('volS',90)/100,
   voice:store.get('voice',true),src:store.get('musicSrc','orig'),seq:null,el:null,files:{lvl:null,boss:null},curKind:null};
 function audioInit(){
   if(A.ctx){if(A.ctx.state==='suspended')A.ctx.resume();return}
   const AC=window.AudioContext||window.webkitAudioContext; if(!AC)return;
-  A.ctx=new AC();
+  try{A.ctx=MOBILE?new AC({latencyHint:'playback'}):new AC()}catch(e){A.ctx=new AC()}
   const comp=A.ctx.createDynamicsCompressor(); comp.threshold.value=-14; comp.ratio.value=4;
   A.master=A.ctx.createGain(); A.master.gain.value=A.muted?0:1; A.master.connect(comp); comp.connect(A.ctx.destination);
   A.music=A.ctx.createGain(); A.music.gain.value=A.volM*0.55; A.music.connect(A.master);
@@ -317,7 +318,7 @@ function audioInit(){
   for(let i=0;i<len;i++)d[i]=Math.random()*2-1; A.noise=buf;
   A.dist=makeDist(60); A.distSoft=makeDist(18);
   // reverb corto para que los disparos y explosiones suenen en un lugar real
-  try{const rl=Math.floor(A.ctx.sampleRate*1.4),ir=A.ctx.createBuffer(2,rl,A.ctx.sampleRate);for(let ch=0;ch<2;ch++){const d2=ir.getChannelData(ch);for(let i=0;i<rl;i++)d2[i]=(Math.random()*2-1)*Math.pow(1-i/rl,3.2)}
+  if(!MOBILE)try{const rl=Math.floor(A.ctx.sampleRate*1.4),ir=A.ctx.createBuffer(2,rl,A.ctx.sampleRate);for(let ch=0;ch<2;ch++){const d2=ir.getChannelData(ch);for(let i=0;i<rl;i++)d2[i]=(Math.random()*2-1)*Math.pow(1-i/rl,3.2)}
     A.rev=A.ctx.createConvolver();A.rev.buffer=ir;const rs=A.ctx.createGain();rs.gain.value=0.22;A.sfx.connect(rs);rs.connect(A.rev);A.rev.connect(A.master)}catch(e){}
   // desbloqueo iOS
   const b=A.ctx.createBuffer(1,1,22050), s=A.ctx.createBufferSource(); s.buffer=b; s.connect(A.ctx.destination); s.start(0);
@@ -393,14 +394,14 @@ const SFX={
   step(){const t=A.ctx.currentTime;noise(t,0.03,0.05,'lowpass',500)},
   pause(){const t=A.ctx.currentTime;osc('square',mtof(84),t,0.06,0.1);osc('square',mtof(79),t+0.07,0.08,0.1)},
 };
-function sfx(name,...a){if(!A.ctx||A.muted)return;try{SFX[name](...a)}catch(e){}}
+const sfxLast={};function sfx(name,...a){if(!A.ctx||A.muted)return;const now=A.ctx.currentTime;if(now-(sfxLast[name]||-1)<(MOBILE?0.045:0.02))return;sfxLast[name]=now;try{SFX[name](...a)}catch(e){}}
 
 // ---- locutor (voz sintetizada del navegador)
 let voices=[];
 function loadVoices(){try{voices=speechSynthesis.getVoices()}catch(e){}}
 try{speechSynthesis.onvoiceschanged=loadVoices;loadVoices()}catch(e){}
 function say(text,{pitch=0.55,rate=0.95,vol=1}={}){
-  if(!A.voice||A.muted)return;try{
+  if(!A.voice||A.muted||MOBILE)return;try{
     const u=new SpeechSynthesisUtterance(text);const v=voices.find(v=>/es[-_](AR|MX|US|419)/i.test(v.lang))||voices.find(v=>/^es/i.test(v.lang));
     if(v)u.voice=v;u.lang=v?v.lang:'es-AR';u.pitch=pitch;u.rate=rate;u.volume=vol*A.volS;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}
 }
@@ -484,9 +485,9 @@ function playCrash(t){noise(t,1,0.3,'highpass',4500,2000,0.7,A.music)}
 function playBass(t,m,d){const o=A.ctx.createOscillator(),o2=A.ctx.createOscillator(),f=A.ctx.createBiquadFilter(),g=A.ctx.createGain();
   o.type='sawtooth';o2.type='square';o.frequency.value=mtof(m);o2.frequency.value=mtof(m-12);f.type='lowpass';f.frequency.setValueAtTime(1100,t);f.frequency.exponentialRampToValueAtTime(260,t+d);f.Q.value=4;
   const g2=A.ctx.createGain();g2.gain.value=0.35;env(g,t,0.004,0.32,d);o.connect(f);o2.connect(g2);g2.connect(f);f.connect(g);g.connect(A.music);o.start(t);o2.start(t);o.stop(t+d+0.05);o2.stop(t+d+0.05)}
-function playGtr(t,root,d,big){const ws=A.ctx.createWaveShaper();ws.curve=A.dist;ws.oversample='2x';const f=A.ctx.createBiquadFilter();f.type='lowpass';f.frequency.value=big?3400:2200;
+function playGtr(t,root,d,big){const ws=A.ctx.createWaveShaper();ws.curve=A.dist;ws.oversample=MOBILE?'none':'2x';const f=A.ctx.createBiquadFilter();f.type='lowpass';f.frequency.value=big?3400:2200;
   const pre=A.ctx.createGain();pre.gain.value=0.6;const g=A.ctx.createGain();env(g,t,0.003,big?0.15:0.12,d,big?0.05:0.0001);
-  [0,7,12].forEach((iv,i)=>{[-6,6].forEach(dt=>{const o=A.ctx.createOscillator();o.type='sawtooth';o.frequency.value=mtof(root+iv);o.detune.value=dt;o.connect(pre);o.start(t);o.stop(t+d+0.08)})});
+  [0,7,12].forEach((iv,i)=>{(MOBILE?[0]:[-6,6]).forEach(dt=>{const o=A.ctx.createOscillator();o.type='sawtooth';o.frequency.value=mtof(root+iv);o.detune.value=dt;o.connect(pre);o.start(t);o.stop(t+d+0.08)})});
   pre.connect(ws);ws.connect(f);f.connect(g);g.connect(A.music)}
 function playLead(t,m,d){const o=A.ctx.createOscillator(),o2=A.ctx.createOscillator(),g=A.ctx.createGain(),ws=A.ctx.createWaveShaper(),f=A.ctx.createBiquadFilter(),v=A.ctx.createOscillator(),vg=A.ctx.createGain();
   ws.curve=A.distSoft;o.type='square';o2.type='sawtooth';o.frequency.value=mtof(m);o2.frequency.value=mtof(m);o2.detune.value=8;
@@ -497,7 +498,7 @@ function seqStart(name){
   seqStop();if(!A.ctx)return;const tr=TRACKS[name];if(!tr)return;
   const st=60/tr.bpm/4;const s={tr,st,step:0,next:A.ctx.currentTime+0.08,name};A.seq=s;
   s.timer=setInterval(()=>{if(A.seq!==s)return;const now=A.ctx.currentTime;if(s.next<now-0.5)s.next=now+0.05;
-    while(s.next<now+0.14){schedStep(s,s.next);s.next+=st;s.step++}},25);
+    while(s.next<now+(MOBILE?0.45:0.22)){schedStep(s,s.next);s.next+=st;s.step++}},MOBILE?60:30);
 }
 function schedStep(s,t){
   const tr=s.tr,bi=Math.floor(s.step/16)%tr.bars,i=s.step%16,st=s.st;
@@ -1064,7 +1065,7 @@ function levelClear0(){
   say('¡Misión cumplida!',{pitch:0.45,rate:0.9});
 }
 function afterMission(){const next=G.mission+1;
-  if(next>=MISSIONS.length){G.state='ending';G.endT=0;setTouch(false);music('story');jingle('win');say(G.two?'¡Misión cumplida! ¡Atraparon al General!':'¡Misión cumplida! Todo esto fue por vos, Marisol.',{pitch:0.55,rate:0.9});setTimeout(askName,5200);return}
+  if(next>=MISSIONS.length){G.state='ending';G.endT=0;setTouch(false);music('story');jingle('win');say('¡Misión cumplida! ¡Atraparon al General!',{pitch:0.55,rate:0.9});setTimeout(askName,5200);return}
   storyAfter(G.mission,()=>{startMission(next);missionIntro()})}
 
 const SKY_SPEED=85;
@@ -1922,7 +1923,7 @@ function drawEnding(){
   fam.forEach(([k,x,y,s],i)=>{if(G.endT>0.6+i*0.4){const b=Math.sin(G.t*3+i)*3;drawFace(k,x,y+b,s)}});
   const x=VW*0.7;txt('¡MISIÓN',x,80,30,'#ffc83a','center','Bungee, Impact, sans-serif',7);txt('CUMPLIDA!',x,118,30,'#ffc83a','center','Bungee, Impact, sans-serif',7);
   if(G.endT>1.2){drawHeart(x,170,22+Math.sin(G.t*6)*2,'#ff3d8f');}
-  if(G.endT>2)txt(G.two?'LA FAMILIA ESTÁ JUNTA OTRA VEZ':'TODO ESTO FUE POR VOS,',x,222,10,'#fff','center');
+  if(G.endT>2)txt('LA FAMILIA ESTÁ JUNTA OTRA VEZ',x,222,10,'#fff','center');
   if(G.endT>2.6)txt(G.two?'RIKI + MARISOL':'MARISOL',x,256,G.two?20:26,'#ff4f9a','center','Bungee, Impact, sans-serif',6);
   if(G.endT>3.4)txt('PUNTAJE FINAL '+String(G.score).padStart(7,'0'),x,292,9,'#ffc83a','center');
   if(G.endT>4.5&&Math.floor(G.t*2)%2)txt('TOCÁ PARA VOLVER AL INICIO',x,330,8,'#9fb3c8','center');
@@ -2543,10 +2544,10 @@ function storyAfter(m,done){const A={
 function storyEnding(){return [
   {cap:'EL CAMIÓN QUEDÓ PATAS PARA ARRIBA',bg:['#ffb070','#ff6a8a'],boom:true,who:SV([['marisol',0.5,240,0,'fJump']],[['riki',0.35,230,0,'fist'],['marisol',0.65,215,0,'fJump']]),say:['marisol',SV('¡Sabía que ibas a venir!','¡Lo logramos!')],vox:'kyaa'},
   {cap:'Y ENTONCES…',bg:['#ffc8d8','#ff8ab0'],fx:'kdrama',who:[['riki',0.3,235,0,'shy'],['marisol',0.7,215,0,'fHeart']],say:['riki','Te dije que era una sorpresa para esta noche…'],sfx:'doki'},
-  {cap:'LA SORPRESA',bg:['#ff8ab0','#ffd24a'],fx:'kdrama',tickets:true,who:[['marisol',0.75,235,0,'fKyaa']],say:['marisol','¡¿DOS PASAJES A SEÚL?! ¡KYAAAAA!'],vox:'kyaa'},
+  {cap:'LA SORPRESA',bg:['#ff8ab0','#ffd24a'],fx:'kdrama',tickets:true,who:[['marisol',0.75,235,0,'fKyaa']],say:['marisol','¿Una cena con RAMEN… y sobrecito de caldo en polvo? ¡KYAAA, TE AMO!'],vox:'kyaa'},
   {cap:'THOR Y MIMIKO SE ACERCAN AL GENERAL',bg:['#3a2a4a','#7a3c8a'],who:[['general',0.28,210,0,'sad'],['thor',0.6,120,0,'wave'],['mimiko',0.82,110,0,'wave']],say:['general','¿Me… me quieren a mí?'],vox:'nyaa'},
   {cap:'FINAL FELIZ',bg:['#ffd6a8','#ff9a6a'],who:[['general',0.22,200],['mimiko',0.4,100,0,'curl']],say:['general','Ahora tengo un gatito y vendo empanadas. ¡Gracias, chicos!'],sfx:'chime'},
-  {cap:'MIENTRAS TANTO, EN SEÚL…',bg:['#05040a','#1a0b25'],who:[['cejas',0.5,230]],say:['cejas','¿Así que perdió mi hermano? Que vengan a Corea. Los estoy esperando.'],sfx:'dundun',tease:true},
+  {cap:'MIENTRAS TANTO, EN ALGÚN LUGAR…',bg:['#05040a','#1a0b25'],who:[['cejas',0.5,230]],say:['cejas','¿Así que perdió mi hermano? Disfruten su ramen… mientras puedan.'],sfx:'dundun',tease:true},
 ]}
 function playStory(panels,done){G.state='story';STORY.panels=panels;STORY.i=0;STORY.t=0;STORY.done=done;G.parts=[];setTouch(false);music('story');sfx('pause')}
 function updateStory(dt){STORY.t+=dt;updateParts(dt);const pn=STORY.panels[STORY.i];if(!pn)return;
@@ -2587,9 +2588,20 @@ function drawStory(){const pn=STORY.panels[STORY.i];if(!pn)return;const t=STORY.
   if(pn.phone)drawPhone(pn,m+30,m+30,t);
   let capH=1e9;if(pn.say){ctx.font='12px Bungee, Impact, sans-serif';const ls=wrapText(pn.say[1],Math.min(300,w-40));capH=(m+h-6)-(m+46+ls.length*17+18+14)}
   pn.who.forEach((wv,i)=>drawWho(wv,i,m,w,h,t,(wv[0]==='general'||wv[0]==='cejas')?capH/0.92:capH));
-  if(pn.tickets&&t>0.3){const s=Math.min(1,(t-0.3)*4);ctx.save();ctx.translate(m+w*0.32,m+h*0.55);ctx.rotate(-0.12);ctx.scale(s,s);for(const o of [0,1]){ctx.save();ctx.translate(o*24,o*18);ctx.rotate(o*0.15);
-    ctx.fillStyle='#fff';ctx.strokeStyle='#120c08';ctx.lineWidth=3;ctx.fillRect(-90,-40,180,80);ctx.strokeRect(-90,-40,180,80);ctx.fillStyle='#ff3d8f';ctx.fillRect(-90,-40,180,20);
-    ctx.fillStyle='#fff';ctx.font='10px Bungee, Impact, sans-serif';ctx.fillText('BOARDING PASS ✈',-80,-26);ctx.fillStyle='#120c08';ctx.font='18px Bungee, Impact, sans-serif';ctx.fillText('EZE ✈ ICN',-78,6);ctx.font='9px sans-serif';ctx.fillText(o?'RIKI':'MARISOL',-78,26);ctx.fillText('SEÚL · COREA',20,26);ctx.restore()}ctx.restore()}
+  if(pn.tickets&&t>0.3){const s=Math.min(1,(t-0.3)*4);ctx.save();ctx.translate(m+w*0.3,m+h*0.56);ctx.rotate(-0.06);ctx.scale(s,s);
+    // cupón de la cena
+    ctx.fillStyle='#fff6e0';ctx.strokeStyle='#120c08';ctx.lineWidth=3;ctx.fillRect(-120,-78,240,52);ctx.strokeRect(-120,-78,240,52);ctx.setLineDash([5,4]);ctx.strokeRect(-114,-72,228,40);ctx.setLineDash([]);
+    ctx.fillStyle='#c0185f';ctx.font='15px Bungee, Impact, sans-serif';ctx.textAlign='center';ctx.fillText('CUPÓN: CENA ROMÁNTICA',0,-50);ctx.fillStyle='#120c08';ctx.font='9px sans-serif';ctx.fillText('válido por 1 ramen para dos + caldito en polvo',0,-37);
+    // bowl de ramen humeando
+    ctx.fillStyle='#d8322a';ctx.beginPath();ctx.moveTo(-70,0);ctx.quadraticCurveTo(0,90,70,0);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.fillRect(-46,22,92,5);
+    ctx.fillStyle='#f3d27a';ctx.beginPath();ctx.ellipse(0,0,70,13,0,0,7);ctx.fill();ctx.stroke();
+    ctx.strokeStyle='#e8b850';ctx.lineWidth=2;for(let k=-3;k<=3;k++){ctx.beginPath();ctx.moveTo(k*14-10,-2);ctx.quadraticCurveTo(k*14,6,k*14+10,-2);ctx.stroke()}
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(-30,-3,13,8,0,0,7);ctx.fill();ctx.fillStyle='#ffb020';ctx.beginPath();ctx.arc(-30,-3,5,0,7);ctx.fill();ctx.fillStyle='#4a8a3a';ctx.fillRect(14,-8,26,6);
+    ctx.strokeStyle='#5a3418';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(40,-34);ctx.lineTo(10,0);ctx.moveTo(52,-30);ctx.lineTo(20,2);ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.75)';ctx.lineWidth=2;for(let k=-1;k<=1;k++){ctx.beginPath();const sx=k*22;ctx.moveTo(sx,-16);ctx.quadraticCurveTo(sx+8+Math.sin(G.t*3+k)*4,-26,sx,-36);ctx.stroke()}
+    // sobrecito de caldo
+    ctx.save();ctx.translate(98,18);ctx.rotate(0.25);ctx.fillStyle='#ffcc33';ctx.strokeStyle='#120c08';ctx.lineWidth=2;ctx.fillRect(-18,-24,36,48);ctx.strokeRect(-18,-24,36,48);ctx.fillStyle='#c0392b';ctx.font='8px Bungee, Impact, sans-serif';ctx.fillText('CALDO',0,-6);ctx.fillText('SABOR',0,4);ctx.fillText('GALLINA',0,14);ctx.restore();
+    ctx.textAlign='left';ctx.restore()}
   ctx.restore();ctx.restore();
   ctx.strokeStyle='#120c08';ctx.lineWidth=6;ctx.strokeRect(m,m,w,h);
   ctx.font='10px "Press Start 2P"';const cap=noAcc(pn.cap);const cw=ctx.measureText(cap).width+24;ctx.fillStyle=pn.tease?'#ff3d8f':'#ffe27a';ctx.fillRect(m+10,m+10,cw,28);ctx.strokeStyle='#120c08';ctx.lineWidth=3;ctx.strokeRect(m+10,m+10,cw,28);
@@ -2606,7 +2618,7 @@ function drawStory(){const pn=STORY.panels[STORY.i];if(!pn)return;const t=STORY.
 
 function afterMission(){const next=G.mission+1;
   if(next>=MISSIONS.length){store.set('beaten',true);store.set('mariUnlocked',true);
-    playStory(storyEnding(),()=>{G.state='ending';G.endT=0;setTouch(false);music('story');jingle('win');say(G.two?'¡Misión cumplida! ¡Nos vamos a Seúl!':'¡Misión cumplida! Todo esto fue por vos, Marisol.',{pitch:0.55,rate:0.9});setTimeout(askName,5200)});return}
+    playStory(storyEnding(),()=>{G.state='ending';G.endT=0;setTouch(false);music('story');jingle('win');say(G.two?'¡Misión cumplida! ¡Esta noche hay ramen!':'¡Misión cumplida! ¡Esta noche hay ramen!',{pitch:0.55,rate:0.9});setTimeout(askName,5200)});return}
   storyAfter(G.mission,()=>{startMission(next);missionIntro()})}
 function drawEnding(){
   ctx.fillStyle='#1a0d1e';ctx.fillRect(0,0,VW,VH);const gr=ctx.createRadialGradient(VW/2,VH/2,10,VW/2,VH/2,VW*0.6);gr.addColorStop(0,'rgba(255,79,154,.35)');gr.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=gr;ctx.fillRect(0,0,VW,VH);
@@ -2615,10 +2627,10 @@ function drawEnding(){
   fam.forEach(([k,p,x,s],i)=>{if(G.endT>0.3+i*0.35){const b=-Math.abs(Math.sin(G.t*4+i))*6;const a=CHAR_ATL[k];drawSpr(a,p,x,VH-6+b,s*REFH[a](p)/ATL[a][p][3])}});
   const x=VW*0.77;txt('¡MISIÓN',x,70,28,'#ffc83a','center','Bungee, Impact, sans-serif',7);txt('CUMPLIDA!',x,106,28,'#ffc83a','center','Bungee, Impact, sans-serif',7);
   if(G.endT>1.2){drawHeart(x,150,20+Math.sin(G.t*6)*2,'#ff3d8f')}
-  if(G.endT>2)txt(G.two?'LA FAMILIA ESTÁ JUNTA OTRA VEZ':'TODO ESTO FUE POR VOS,',x,198,9,'#fff','center');
-  if(G.endT>2.6)txt(G.two?'RIKI + MARISOL':'MARISOL',x,230,G.two?18:24,'#ff4f9a','center','Bungee, Impact, sans-serif',6);
+  if(G.endT>2)txt('LA FAMILIA ESTÁ JUNTA OTRA VEZ',x,198,9,'#fff','center');
+  if(G.endT>2.6)txt('RIKI + MARISOL',x,230,18,'#ff4f9a','center','Bungee, Impact, sans-serif',6);
   if(G.endT>3.4)txt('PUNTAJE FINAL '+String(G.score).padStart(7,'0'),x,262,8,'#ffc83a','center');
-  if(G.endT>4)txt('CONTINUARÁ… MISIÓN MARISOL 2: SEÚL',x,290,7,'#7ad3ff','center');
+  if(G.endT>4)txt('CONTINUARÁ… MISIÓN MARISOL 2',x,290,7,'#7ad3ff','center');
   if(G.endT>4.5&&Math.floor(G.t*2)%2)txt('TOCÁ PARA VOLVER AL INICIO',x,330,8,'#9fb3c8','center');
   drawKP(true)}
 
@@ -2956,7 +2968,7 @@ function storyIntro(){return [
     say:SV(['marisol','¡RIKIII! ¡Nos llevan para el puerto de Barranqueras!'],['thor','¡MRRRAAAU!']),vox:SV('kyaa','mrau')},
   {cap:SV('RIKI NO LO PIENSA DOS VECES','NADIE TOCA A ESTA FAMILIA','MARISOL SE ARREMANGA LA CAMPERA'),bg:['#1f4e63','#3f8f8a'],
     who:SV([['riki',0.5,250,0,'front']],[['riki',0.36,240,0,'front'],['marisol',0.66,215,0,'fJump']],[['marisol',0.5,240,0,'fJump']]),
-    say:SV(['riki','Bigotón se metió con el chaqueño equivocado. ¡VAMOS!'],['marisol','¡Ndeee! ¡Vamos juntos a buscarlos!'],['marisol','¡Devolveme a mis gatos, bigote trucho!']),vox:SV('ohyeah','yay','yay')},
+    say:SV(['riki','Bigotón se metió con el chileno más chaqueño de todos. ¡Vamos, po!'],['marisol','¡Ndeee! ¡Vamos juntos a buscarlos!'],['marisol','¡Devolveme a mis gatos, bigote trucho!']),vox:SV('ohyeah','yay','yay')},
 ]}
 function storyAfter(m,done){const hero=P.char==='marisol'?'marisol':'riki';const A={
   0:[{cap:'¡RESCATASTE A MIMIKO!',bg:['#3a2a4a','#7a3c8a'],who:[['mimiko',0.5,170,0,'yay']],say:['mimiko','¡Nyaa~! (Traducción: tardaste un montón)'],vox:'nyaa'},
@@ -2979,10 +2991,10 @@ function storyAfter(m,done){const hero=P.char==='marisol'?'marisol':'riki';const
 function storyEnding(){return [
   {cap:'EL CAMIÓN QUEDÓ CRUZADO EN EL PUENTE',bg:['#ffb070','#ff6a8a'],boom:true,who:SV([['marisol',0.5,240,0,'fJump']],[['riki',0.35,230,0,'fist'],['marisol',0.65,215,0,'fJump']]),say:['marisol',SV('¡Sabía que ibas a venir!','¡Lo logramos!')],vox:'kyaa'},
   {cap:'ATARDECER SOBRE EL PARANÁ…',bg:['#ffc8d8','#ff8ab0'],fx:'kdrama',who:[['riki',0.3,235,0,'shy'],['marisol',0.7,215,0,'fHeart']],say:['riki','Te dije que era una sorpresa para esta noche…'],sfx:'doki'},
-  {cap:'LA SORPRESA',bg:['#ff8ab0','#ffd24a'],fx:'kdrama',tickets:true,who:[['marisol',0.75,235,0,'fKyaa']],say:['marisol','¡¿DOS PASAJES A SEÚL?! ¡KYAAAAA!'],vox:'kyaa'},
+  {cap:'LA SORPRESA',bg:['#ff8ab0','#ffd24a'],fx:'kdrama',tickets:true,who:[['marisol',0.75,235,0,'fKyaa']],say:['marisol','¿Una cena con RAMEN… y sobrecito de caldo en polvo? ¡KYAAA, TE AMO!'],vox:'kyaa'},
   {cap:'THOR Y MIMIKO SE ACERCAN AL GENERAL',bg:['#3a2a4a','#7a3c8a'],who:[['general',0.28,210,0,'sad'],['thor',0.6,120,0,'wave'],['mimiko',0.82,110,0,'wave']],say:['general','¿Me… me quieren a mí?'],vox:'nyaa'},
   {cap:'FINAL FELIZ',bg:['#ffd6a8','#ff9a6a'],who:[['general',0.22,200],['mimiko',0.4,100,0,'curl']],say:['general','Ahora tengo un gatito y vendo chipá en la Plaza 25 de Mayo. ¿Un tereré?'],sfx:'chime'},
-  {cap:'MIENTRAS TANTO, EN SEÚL…',bg:['#05040a','#1a0b25'],who:[['cejas',0.5,230]],say:['cejas','¿Así que perdió mi hermano? Que vengan a Corea. Los estoy esperando.'],sfx:'dundun',tease:true},
+  {cap:'MIENTRAS TANTO, EN ALGÚN LUGAR…',bg:['#05040a','#1a0b25'],who:[['cejas',0.5,230]],say:['cejas','¿Así que perdió mi hermano? Disfruten su ramen… mientras puedan.'],sfx:'dundun',tease:true},
 ]}
 
 // =====================================================================
