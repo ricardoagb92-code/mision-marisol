@@ -1,0 +1,23 @@
+{
+ "name": "Misión Marisol",
+ "short_name": "Misión Marisol",
+ "start_url": "./",
+ "scope": "./",
+ "display": "fullscreen",
+ "orientation": "landscape",
+ "background_color": "#0d0a12",
+ "theme_color": "#0d0a12",
+ "icons": [
+  {
+   "src": "assets/icono-mision-marisol-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "assets/apple-touch-icon.png",
+   "sizes": "180x180",
+   "type": "image/png"
+  }
+ ]
+}
